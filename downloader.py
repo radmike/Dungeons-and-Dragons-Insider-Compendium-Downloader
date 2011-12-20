@@ -8,195 +8,276 @@ import settings # This file should contain your DDI email and password
                 # Or comment this import out and define settings.email and settings.password in this file
 from BeautifulSoup import BeautifulSoup
 
+class LoginError(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+class DDIDownloader:
+
+	loginurl   = "http://www.wizards.com/dndinsider/compendium/login.aspx?page=%s&id=%s"
+	displayurl = "http://www.wizards.com/dndinsider/compendium/display.aspx?page=%s&id=%s"
+	indexurl   = "http://www.wizards.com/dndinsider/compendium/CompendiumSearch.asmx/ViewAll?tab="
+	stripurls = ["http://www.wizards.com/dndinsider/compendium/",
+				 "http://www.wizards.com/dnd/"]
+				 
+	loginattempts = 0
+	maxloginattempts = 5
+	
+	categories  = 	['Background', 'Class', 'Companion', 'Deity', 'Disease',
+					'EpicDestiny', 'Feat', 'Glossary', 'Item',
+					'Monster', 'ParagonPath', 'Poison', 'Power',
+					'Race', 'Ritual', 'Terrain', 'Trap']
+	
+	fields		=  	[['type','campaign','skills'],
+					['powersourcetext','rolename','keyabilities'],
+					['type'],
+					['alignment'],
+					['level'],
+					['prerequisite'],
+					['tiername','tiersort'],
+					['category','type'],
+					['cost','level','rarity','category','levelsort','costsort'],
+					['level','grouprole','combatrole'],
+					['prerequisite'],
+					['level','cost'],
+					['level','actiontype','classname'],
+					['descriptionattribute'],
+					['componentcost','price','keyskilldescription'],
+					['type'],
+					['grouprole','type','level']]
+	for i in fields:
+		i.insert(0,'name')
+		i.insert(0,'id')
+		i.append('sourcebook')
+					
+	
+	downloadqueue = []
+	failed = []
+	
+	cj = cookielib.CookieJar()
+	opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+	
+	email = ""
+	password = ""
+	
+	def __init__(self, email, password):
+		self.email = email
+		self.password = password
+		
+	def open(self,url):
+		return self.opener.open(url)
+		
+	def login(self,category,item):
+		"""This logs into the DDI"""
+		loginUrl = self.build_url(self.loginurl,category,item)
+		print("Attempting to login with email : %s " % self.email)
+		"""First we acquire the __VIEWSTATE and __EVENTVALIDATION variables 
+		These seem to be neccessary to log in successfully"""
+		resp = self.opener.open(loginUrl)
+		page = resp.read()
+		m = re.search("id=\"__VIEWSTATE\" value=\"([a-zA-Z0-9=+/]*)\"",page)
+		viewstate = m.group(1)
+		m = re.search("id=\"__EVENTVALIDATION\" value=\"([a-zA-Z0-9=+/]*)\"",page)
+		eventvalidation = m.group(1)
+		#Build the login variable string
+		login_data = urllib.urlencode({'email' : self.email, 'password' : self.password, '__VIEWSTATE' : viewstate, '__EVENTVALIDATION' : eventvalidation, 'InsiderSignin' : 'Sign In'})
+		resp = self.opener.open(loginUrl, login_data)
+
+	def logged_in(self,page):
+		"""Check to see if a returned page is the login page"""
+		m = re.search("<input type=\"submit\" name=\"InsiderSignin\" value=\"Sign In\" id=\"InsiderSignin\" />",page)
+		if not m:
+			return True
+		return False
+
+	def retrieve_page(self,category,item):
+		"""Retrieve a given DDI page labelled by category and ID"""
+		url = self.build_url(self.displayurl,category,item)
+		response = self.open(url)
+		page = response.read()
+		if not self.logged_in(page):
+			self.loginattempts += 1
+			if self.loginattempts > self.maxloginattempts:
+				raise LoginError("Reached Maximum Login Attempts")
+			self.login(category,item)
+			return self.retrieve_page(category,item)
+		return page
 
 
-cj = cookielib.CookieJar()
-opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+	def getText(self,nodelist):
+		rc = []
+		for node in nodelist:
+			if node.nodeType == node.TEXT_NODE:
+				rc.append(node.data)
+			return ''.join(rc)
+
+	def handleClass(self,cclass):
+		handleName(cclass.getElementsByTagName("Name")[0])
+		handleID(cclass.getElementsByTagName("ID")[0])
+
+	def getNodeText(self,node,name):
+		return self.getText(node.getElementsByTagName(name)[0].childNodes)
     
 
-def login(category,item):
-    loginUrl = build_login_url(category,item)
-    print("Attempting to login with email : %s " % settings.email)
-    resp = opener.open(loginUrl)
-    page = resp.read()
-    m = re.search("id=\"__VIEWSTATE\" value=\"([a-zA-Z0-9=+/]*)\"",page)
-    viewstate = m.group(1)
-    m = re.search("id=\"__EVENTVALIDATION\" value=\"([a-zA-Z0-9=+/]*)\"",page)
-    eventvalidation = m.group(1)
-    login_data = urllib.urlencode({'email' : settings.email, 'password' : settings.password, '__VIEWSTATE' : viewstate, '__EVENTVALIDATION' : eventvalidation, 'InsiderSignin' : 'Sign In'})
-    resp = opener.open(loginUrl, login_data)
-    
-    
+	def index(self,path):
+		classurl = self.indexurl + path
+		response = self.open(classurl)
 
-def logged_in(page):
-    """Check to see if a returned page is the login page"""
-    m = re.search("<input type=\"submit\" name=\"InsiderSignin\" value=\"Sign In\" id=\"InsiderSignin\" />",page)
-    if not m:
-        return True
-    return False
+		doc = xml.dom.minidom.parse(response)
 
-def retrieve_page(category,item):
-    url = build_url(category,item)
-    response = opener.open(url)
-    page = response.read()
-    if not logged_in(page):
-        login(category,item)
-        return retrieve_page(category,item)
-    return page
+		index = {}
+		for node in doc.getElementsByTagName(path):
+			Name = self.getNodeText(node,"Name")
+			ID = int(self.getNodeText(node,"ID"))
+			index[ID] = Name
 
-def retrieve_index(url):
-    response = opener.open(url)
-    page = response.read()
-
-    return page
-
-def getText(nodelist):
-    rc = []
-    for node in nodelist:
-        if node.nodeType == node.TEXT_NODE:
-            rc.append(node.data)
-        return ''.join(rc)
-
-def handleClass(cclass):
-    handleName(cclass.getElementsByTagName("Name")[0])
-    handleID(cclass.getElementsByTagName("ID")[0])
-
-def getNodeText(node,name):
-    return getText(node.getElementsByTagName(name)[0].childNodes)
-    
-
-def index(path):
-    print "Retrieving %s index" % path
-    classurl = "http://www.wizards.com/dndinsider/compendium/CompendiumSearch.asmx/ViewAll?tab=" + path
-    response = opener.open(classurl)
-    print "Page retrieved"
-
-    doc = xml.dom.minidom.parse(response)
-
-    index = {}
-    for node in doc.getElementsByTagName(path):
-        Name = getNodeText(node,"Name")
-        ID = int(getNodeText(node,"ID"))
-        index[ID] = Name
-
-    return index
+		return index
 
 
-def build_url(category,item):
-    url = "http://www.wizards.com/dndinsider/compendium/display.aspx?page=%s&id=%s" % (category, item)
-    return url
+	def build_url(self,baseurl,category,item):
+		url = baseurl % (category, item)
+		return url
 
-def build_login_url(category,item):
-    url = "http://www.wizards.com/dndinsider/compendium/login.aspx?page=%s&id=%s" % (category, item)
-    return url
 
-def save_page(page,category,item):
-    filename = "%s\%s.html" % (category, item)
-    dirs = os.path.dirname(filename)
-    if not os.path.exists(dirs):
-        os.makedirs(dirs)
-    f = open(filename,"w")
-    f.write(page)
-    f.close()
+	def save_page(self,page,category,item):
+		filename = "%s\%s.html" % (category, item)
+		dirs = os.path.dirname(filename)
+		if not os.path.exists(dirs):
+			os.makedirs(dirs)
+		f = open(filename,"w")
+		f.write(page)
+		f.close()
 
-def save_file(url):
-    if full_url(url):
-        if re.match("http://www.wizards.com/dndinsider/compendium/",url):
-            path = re.sub("http://www.wizards.com/dndinsider/compendium/","",url)
-        elif re.match("http://www.wizards.com/dnd/",url):
-            path = re.sub("http://www.wizards.com/dnd/","",url)
-    else:
-        path = url
-        url = "http://www.wizards.com/dndinsider/compendium/%s" % path
-    if not os.path.exists(path):
-        dirname = os.path.dirname(path)
-        if not os.path.exists(dirname):
-            os.makedirs(dirname)
-        resp = opener.open(url)
-        print "Saving file : %s " % path
-        f = open(path,"wb")
-        f.write(resp.read())
-        f.close()
+	def full_url(self,string):
+		if re.match("http",string):
+			return True
+		return False
+		
+	def save_file(self,url):
+		if self.full_url(url):
+			path = self.strip_urls(url)
+		else:
+			path = url
+			url = "http://www.wizards.com/dndinsider/compendium/%s" % path
+		if not os.path.exists(path):
+			dirname = os.path.dirname(path)
+			if not os.path.exists(dirname):
+				os.makedirs(dirname)
+			resp = self.open(url)
+			print "Saving file : %s " % path
+			f = open(path,"wb")
+			f.write(resp.read())
+			f.close()
+			
+	def save_xml(self,page,category):
+		path = "%s.xml" % category
+		if not os.path.exists(path):
+			print "Saving file : %s " % path
+			f = open(path,"w")
+			f.write(page)
+			f.close()
 
-def strip_urls(url):
-    if re.match('http://www.wizards.com/dndinsider/compendium/',url):
-        return re.sub('http://www.wizards.com/dndinsider/compendium/','',url)
-    elif re.match('http://www.wizards.com/dnd/',url):
-        return re.sub('http://www.wizards.com/dnd/','',url)
-    print "I do not know how to strip this url : %s" % url
-    return url
+	def strip_urls(self,url):
+		for urlroot in self.stripurls:
+			if re.match(urlroot,url):
+				return re.sub(urlroot,"",url)
+		print "I do not know how to strip this url : %s" % url
+		return url
 
-def cleanup_page(page):
-    soup = BeautifulSoup(page)
-    for script in soup.findAll(name='script'):
-        script.extract()
-    soup.meta.extract()
-    soup.input.extract()
-    link = soup.link
-    for link in soup.findAll(name='link'):
-        save_file(link['href'])
-        if full_url(link['href']):
-            link['href'] = strip_urls(link['href'])         
-        link['href'] = "../" + link['href']
-    for image in soup.findAll(name='img'):
-        save_file(image['src'])
-        if full_url(image['src']):
-            image['src'] = strip_urls(image['src'])
-        image['src'] = "../" + image['src']
-    page = soup.prettify()
-    page = re.sub('\xe2\x80\x99',"'",page)
-    page = re.sub('\xe2\x80\x94','&#8212;',page)
-    return page
+	def cleanup_page(self,page):
+		soup = BeautifulSoup(page)
+		for script in soup.findAll(name='script'):
+			script.extract()
+		soup.meta.extract()
+		soup.input.extract()
+		link = soup.link
+		for link in soup.findAll(name='link'):
+			self.save_file(link['href'])
+			if self.full_url(link['href']):
+				link['href'] = strip_urls(link['href'])         
+			link['href'] = "../" + link['href']
+		for image in soup.findAll(name='img'):
+			self.save_file(image['src'])
+			if self.full_url(image['src']):
+				image['src'] = strip_urls(image['src'])
+			image['src'] = "../" + image['src']
+		page = soup.prettify()
+		page = re.sub('\xe2\x80\x99',"'",page)
+		page = re.sub('\xe2\x80\x94','&#8212;',page)
+		return page
+		
+	def crawl_category(self,category):
+		ind = self.index(category)
+		for item in ind:
+			print "Retrieving %s %s: %s" % (category, item, ind[item])
+			try:
+				page = self.retrieve_page(category,item)
+			except urllib2.HTTPError:
+				if category == "Companion":
+					try:
+						#Some "Companions" are "Associates"
+						page = self.retrieve_page("Associate",item)
+					except urllib2.HTTPError:
+						print "Failed on retry: %s %s" % ("Associate",item)
+						failed.append((category,item))
+						continue
+				else:
+					print "Failed: %s %s" % (category,item)
+					self.failed.append((category,item))
+					continue
+			page = self.cleanup_page(page)
+			self.save_page(page,category,item)
 
-def full_url(string):
-    if re.match("http",string):
-        return True
-    return False
-    
+	def download_styles(self):
+		urls = ['http://www.wizards.com/dndinsider/compendium/styles/site.css',
+				'http://www.wizards.com/dndinsider/compendium/styles/detail.css',
+				'http://www.wizards.com/dndinsider/compendium/styles/mobile.css',
+				'http://www.wizards.com/dndinsider/compendium/styles/print.css',
+				'http://www.wizards.com/dndinsider/compendium/styles/reset.css']
+		# Hack for now, eventually parse CSS files to generate list of required stylesheets.
+		for url in urls:
+			self.save_file(url)
+			
+	def download_files(self):
+		for category in self.categories:
+			self.crawl_category(category)
+			
+	def create_index_html(self):
+		for category in self.categories:	
+			classurl = self.indexurl + category
+			response = self.open(classurl)
 
-def crawl_category(category,failed):
-    ind = index(category)
-    for item in ind:
-        print "Retrieving %s %s: %s" % (category, item, ind[item])
-        try:
-            page = retrieve_page(category,item)
-        except urllib2.HTTPError:
-            if category == "Companion":
-                try:
-                    #Some "Companions" are "Associates"
-                    page = retrieve_page("Associate",item)
-                except urllib2.HTTPError:
-                    print "Failed on retry: %s %s" % ("Associate",item)
-                    failed.append((category,item))
-                    continue
-            else:
-                print "Failed: %s %s" % (category,item)
-                failed.append((category,item))
-                continue
-        page = cleanup_page(page)
-        save_page(page,category,item)
-    return failed
+			soup = BeautifulSoup(response)
+			variables = []
+			for node in soup.findAll(category.lower()):
+				nodevars = []
+				for type in self.fields[self.categories.index(category)]:
+					nodevars.append(node.find(type).text)
+				variables.append(nodevars)
+				
+			index = "<html><body>"
+			for item in variables:
+				url = "%s/%s.html" % (category , item[0])
+				name = item[1]
+				link = "\n\t<br /><a href='%s'>%s</a>" % (url,name)
+				index += link
+			index += "\n</html></body>"
+			
+			path = "%s.html" % category
+			
+			print "Saving index file : %s " % path
+			f = open(path,"wb")
+			f.write(index.encode('UTF-8'))
+			f.close()
+			
+					
+		
+D = DDIDownloader(settings.email,settings.password)
+D.create_index_html()
+D.download_styles()
+D.download_files()
+	
 
-def download_styles():
-    urls = ['http://www.wizards.com/dndinsider/compendium/styles/site.css',
-            'http://www.wizards.com/dndinsider/compendium/styles/detail.css',
-            'http://www.wizards.com/dndinsider/compendium/styles/mobile.css',
-            'http://www.wizards.com/dndinsider/compendium/styles/print.css',
-            'http://www.wizards.com/dndinsider/compendium/styles/reset.css']
-    # Hack for now, eventually parse CSS files to generate list of required stylesheets.
-    for url in urls:
-        save_file(url)
 
-download_styles()
-        
-categories = ['Class', 'Companion', 'Deity', 'Disease',
-              'EpicDestiny', 'Feat', 'Glossary', 'Item',
-              'Monster', 'ParagonPath', 'Poison', 'Power',
-              'Race', 'Ritual', 'Skill', 'Terrain']
-
-failed = []
-
-for category in categories:
-    failed = crawl_category(category,failed)
-    
-print failed
