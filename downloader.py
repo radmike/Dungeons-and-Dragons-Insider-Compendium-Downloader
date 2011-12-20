@@ -1,6 +1,7 @@
 import urllib
 import urllib2
 import cookielib
+import codecs
 import re
 import xml.dom.minidom
 import os
@@ -15,7 +16,9 @@ class LoginError(Exception):
         return repr(self.value)
 
 class DDIDownloader:
-
+	
+	meta = '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>\n'
+	
 	loginurl   = "http://www.wizards.com/dndinsider/compendium/login.aspx?page=%s&id=%s"
 	displayurl = "http://www.wizards.com/dndinsider/compendium/display.aspx?page=%s&id=%s"
 	indexurl   = "http://www.wizards.com/dndinsider/compendium/CompendiumSearch.asmx/ViewAll?tab="
@@ -146,7 +149,7 @@ class DDIDownloader:
 		dirs = os.path.dirname(filename)
 		if not os.path.exists(dirs):
 			os.makedirs(dirs)
-		f = open(filename,"w")
+		f = codecs.open(filename,"w","utf-8")
 		f.write(page)
 		f.close()
 
@@ -204,14 +207,13 @@ class DDIDownloader:
 				image['src'] = strip_urls(image['src'])
 			image['src'] = "../" + image['src']
 		page = soup.prettify()
-		page = re.sub('\xe2\x80\x99',"'",page)
-		page = re.sub('\xe2\x80\x94','&#8212;',page)
+		page = self.meta + page
 		return page
 		
 	def crawl_category(self,category):
 		ind = self.index(category)
 		for item in ind:
-			print "Retrieving %s %s: %s" % (category, item, ind[item])
+			print "Retrieving %s %s: %s" % (category, item, ind[item].encode('utf-8'))
 			try:
 				page = self.retrieve_page(category,item)
 			except urllib2.HTTPError:
@@ -257,7 +259,7 @@ class DDIDownloader:
 					nodevars.append(node.find(type).text)
 				variables.append(nodevars)
 				
-			index = "<html><body>"
+			index = self.meta + "<html><body>"
 			for item in variables:
 				url = "%s/%s.html" % (category , item[0])
 				name = item[1]
@@ -268,8 +270,8 @@ class DDIDownloader:
 			path = "%s.html" % category
 			
 			print "Saving index file : %s " % path
-			f = open(path,"wb")
-			f.write(index.encode('UTF-8'))
+			f = codecs.open(path,"w",'utf-8')
+			f.write(index)
 			f.close()
 			
 					
