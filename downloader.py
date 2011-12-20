@@ -277,8 +277,8 @@ class DDIDownloader:
 					
 		
 D = DDIDownloader(settings.email,settings.password)
-#D.create_index_html()
-#D.download_styles()
+D.create_index_html()
+D.download_styles()
 D.download_files()
 	
 
