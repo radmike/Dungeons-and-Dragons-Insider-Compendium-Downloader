@@ -3,10 +3,11 @@ import urllib2
 import cookielib
 import re
 import xml.dom.minidom
-import xml.etree.ElementTree as ET
 import os
-import settings
+import settings # This file should contain your DDI email and password
+                # Or comment this import out and define settings.email and settings.password in this file
 from BeautifulSoup import BeautifulSoup
+
 
 
 cj = cookielib.CookieJar()
@@ -98,16 +99,32 @@ def save_page(page,category,item):
     f.write(page)
     f.close()
 
-def save_file(path):
+def save_file(url):
+    if full_url(url):
+        if re.match("http://www.wizards.com/dndinsider/compendium/",url):
+            path = re.sub("http://www.wizards.com/dndinsider/compendium/","",url)
+        elif re.match("http://www.wizards.com/dnd/",url):
+            path = re.sub("http://www.wizards.com/dnd/","",url)
+    else:
+        path = url
+        url = "http://www.wizards.com/dndinsider/compendium/%s" % path
     if not os.path.exists(path):
         dirname = os.path.dirname(path)
         if not os.path.exists(dirname):
             os.makedirs(dirname)
-        resp = opener.open("http://www.wizards.com/dndinsider/compendium/%s" % path)
+        resp = opener.open(url)
         print "Saving file : %s " % path
-        f = open(path,"w")
+        f = open(path,"wb")
         f.write(resp.read())
         f.close()
+
+def strip_urls(url):
+    if re.match('http://www.wizards.com/dndinsider/compendium/',url):
+        return re.sub('http://www.wizards.com/dndinsider/compendium/','',url)
+    elif re.match('http://www.wizards.com/dnd/',url):
+        return re.sub('http://www.wizards.com/dnd/','',url)
+    print "I do not know how to strip this url : %s" % url
+    return url
 
 def cleanup_page(page):
     soup = BeautifulSoup(page)
@@ -118,33 +135,68 @@ def cleanup_page(page):
     link = soup.link
     for link in soup.findAll(name='link'):
         save_file(link['href'])
+        if full_url(link['href']):
+            link['href'] = strip_urls(link['href'])         
         link['href'] = "../" + link['href']
     for image in soup.findAll(name='img'):
         save_file(image['src'])
+        if full_url(image['src']):
+            image['src'] = strip_urls(image['src'])
         image['src'] = "../" + image['src']
     page = soup.prettify()
+    page = re.sub('\xe2\x80\x99',"'",page)
+    page = re.sub('\xe2\x80\x94','&#8212;',page)
     return page
+
+def full_url(string):
+    if re.match("http",string):
+        return True
+    return False
     
 
-def crawl_category(category):
+def crawl_category(category,failed):
     ind = index(category)
-    failed = []
     for item in ind:
-        print "Retrieving %s : %s" % (category, ind[item])
+        print "Retrieving %s %s: %s" % (category, item, ind[item])
         try:
             page = retrieve_page(category,item)
         except urllib2.HTTPError:
-            failed.append(item)
-            break
+            if category == "Companion":
+                try:
+                    #Some "Companions" are "Associates"
+                    page = retrieve_page("Associate",item)
+                except urllib2.HTTPError:
+                    print "Failed on retry: %s %s" % ("Associate",item)
+                    failed.append((category,item))
+                    continue
+            else:
+                print "Failed: %s %s" % (category,item)
+                failed.append((category,item))
+                continue
         page = cleanup_page(page)
         save_page(page,category,item)
-    print "Failed: ", failed
+    return failed
 
+def download_styles():
+    urls = ['http://www.wizards.com/dndinsider/compendium/styles/site.css',
+            'http://www.wizards.com/dndinsider/compendium/styles/detail.css',
+            'http://www.wizards.com/dndinsider/compendium/styles/mobile.css',
+            'http://www.wizards.com/dndinsider/compendium/styles/print.css',
+            'http://www.wizards.com/dndinsider/compendium/styles/reset.css']
+    # Hack for now, eventually parse CSS files to generate list of required stylesheets.
+    for url in urls:
+        save_file(url)
+
+download_styles()
         
 categories = ['Class', 'Companion', 'Deity', 'Disease',
               'EpicDestiny', 'Feat', 'Glossary', 'Item',
               'Monster', 'ParagonPath', 'Poison', 'Power',
               'Race', 'Ritual', 'Skill', 'Terrain']
 
+failed = []
+
 for category in categories:
-    crawl_category(category)
+    failed = crawl_category(category,failed)
+    
+print failed
