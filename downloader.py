@@ -199,12 +199,12 @@ class DDIDownloader:
 		for link in soup.findAll(name='link'):
 			self.save_file(link['href'])
 			if self.full_url(link['href']):
-				link['href'] = strip_urls(link['href'])         
+				link['href'] = self.strip_urls(link['href'])         
 			link['href'] = "../" + link['href']
 		for image in soup.findAll(name='img'):
 			self.save_file(image['src'])
 			if self.full_url(image['src']):
-				image['src'] = strip_urls(image['src'])
+				image['src'] = self.strip_urls(image['src'])
 			image['src'] = "../" + image['src']
 		page = soup.prettify()
 		page = self.meta + page
