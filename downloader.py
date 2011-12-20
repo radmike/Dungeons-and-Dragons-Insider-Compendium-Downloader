@@ -149,8 +149,8 @@ class DDIDownloader:
 		dirs = os.path.dirname(filename)
 		if not os.path.exists(dirs):
 			os.makedirs(dirs)
-		f = codecs.open(filename,"w","utf-8")
-		f.write(page)
+		f = codecs.open(filename,"w",'utf-8')
+		f.write(page.decode('utf-8'))
 		f.close()
 
 	def full_url(self,string):
@@ -277,8 +277,8 @@ class DDIDownloader:
 					
 		
 D = DDIDownloader(settings.email,settings.password)
-D.create_index_html()
-D.download_styles()
+#D.create_index_html()
+#D.download_styles()
 D.download_files()
 	
 
