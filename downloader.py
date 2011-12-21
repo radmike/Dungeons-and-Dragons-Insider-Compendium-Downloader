@@ -3,7 +3,6 @@ import urllib2
 import cookielib
 import codecs
 import re
-import xml.dom.minidom
 import os
 import settings # This file should contain your DDI email and password
                 # Or comment this import out and define settings.email and settings.password in this file
@@ -16,69 +15,67 @@ class LoginError(Exception):
         return repr(self.value)
 
 class DDIDownloader:
-	
+
 	meta = '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>\n'
-	
+
 	loginurl   = "http://www.wizards.com/dndinsider/compendium/login.aspx?page=%s&id=%s"
 	displayurl = "http://www.wizards.com/dndinsider/compendium/display.aspx?page=%s&id=%s"
 	indexurl   = "http://www.wizards.com/dndinsider/compendium/CompendiumSearch.asmx/ViewAll?tab="
 	stripurls = ["http://www.wizards.com/dndinsider/compendium/",
 				 "http://www.wizards.com/dnd/"]
 				 
+	compendium_dir = "compendium/"
+
 	loginattempts = 0
 	maxloginattempts = 5
-	
+
 	categories  = 	['Background', 'Class', 'Companion', 'Deity', 'Disease',
 					'EpicDestiny', 'Feat', 'Glossary', 'Item',
 					'Monster', 'ParagonPath', 'Poison', 'Power',
 					'Race', 'Ritual', 'Terrain', 'Trap']
-	
-	fields		=  	[['type','campaign','skills'],
-					['powersourcetext','rolename','keyabilities'],
-					['type'],
-					['alignment'],
-					['level'],
-					['prerequisite'],
-					['tiername','tiersort'],
-					['category','type'],
-					['cost','level','rarity','category','levelsort','costsort'],
-					['level','grouprole','combatrole'],
-					['prerequisite'],
-					['level','cost'],
-					['level','actiontype','classname'],
-					['descriptionattribute'],
-					['componentcost','price','keyskilldescription'],
-					['type'],
-					['grouprole','type','level']]
+
+	fields	=  	[['type','campaign','skills'],
+				['powersourcetext','rolename','keyabilities'],
+				['type'],
+				['alignment'],
+				['level'],
+				['prerequisite'],
+				['tiername','tiersort'],
+				['category','type'],
+				['cost','level','rarity','category','levelsort','costsort'],
+				['level','grouprole','combatrole'],
+				['prerequisite'],
+				['level','cost'],
+				['level','actiontype','classname'],
+				['descriptionattribute'],
+				['componentcost','price','keyskilldescription'],
+				['type'],
+				['grouprole','type','level']]
 	for i in fields:
 		i.insert(0,'name')
 		i.insert(0,'id')
 		i.append('sourcebook')
-					
-	
+
 	downloadqueue = []
 	failed = []
-	
+
 	cj = cookielib.CookieJar()
 	opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
-	
+	open = opener.open
 	email = ""
 	password = ""
-	
+
 	def __init__(self, email, password):
 		self.email = email
 		self.password = password
-		
-	def open(self,url):
-		return self.opener.open(url)
-		
+
 	def login(self,category,item):
 		"""This logs into the DDI"""
 		loginUrl = self.build_url(self.loginurl,category,item)
 		print("Attempting to login with email : %s " % self.email)
-		"""First we acquire the __VIEWSTATE and __EVENTVALIDATION variables 
+		"""First we acquire the __VIEWSTATE and __EVENTVALIDATION variables
 		These seem to be neccessary to log in successfully"""
-		resp = self.opener.open(loginUrl)
+		resp = self.open(loginUrl)
 		page = resp.read()
 		m = re.search("id=\"__VIEWSTATE\" value=\"([a-zA-Z0-9=+/]*)\"",page)
 		viewstate = m.group(1)
@@ -86,7 +83,7 @@ class DDIDownloader:
 		eventvalidation = m.group(1)
 		#Build the login variable string
 		login_data = urllib.urlencode({'email' : self.email, 'password' : self.password, '__VIEWSTATE' : viewstate, '__EVENTVALIDATION' : eventvalidation, 'InsiderSignin' : 'Sign In'})
-		resp = self.opener.open(loginUrl, login_data)
+		resp = self.open(loginUrl, login_data)
 
 	def logged_in(self,page):
 		"""Check to see if a returned page is the login page"""
@@ -108,44 +105,26 @@ class DDIDownloader:
 			return self.retrieve_page(category,item)
 		return page
 
-
-	def getText(self,nodelist):
-		rc = []
-		for node in nodelist:
-			if node.nodeType == node.TEXT_NODE:
-				rc.append(node.data)
-			return ''.join(rc)
-
-	def handleClass(self,cclass):
-		handleName(cclass.getElementsByTagName("Name")[0])
-		handleID(cclass.getElementsByTagName("ID")[0])
-
-	def getNodeText(self,node,name):
-		return self.getText(node.getElementsByTagName(name)[0].childNodes)
-    
-
-	def index(self,path):
-		classurl = self.indexurl + path
+	def index(self,category):
+		classurl = self.indexurl + category
 		response = self.open(classurl)
-
-		doc = xml.dom.minidom.parse(response)
-
+		
+		soup = BeautifulSoup(response)
+		
 		index = {}
-		for node in doc.getElementsByTagName(path):
-			Name = self.getNodeText(node,"Name")
-			ID = int(self.getNodeText(node,"ID"))
-			index[ID] = Name
-
+		D.soup = soup
+		for node in soup.findAll(category.lower()):
+			name = node.find("name").text
+			id = int(node.find("id").text)
+			index[id] = name
 		return index
-
 
 	def build_url(self,baseurl,category,item):
 		url = baseurl % (category, item)
 		return url
 
-
 	def save_page(self,page,category,item):
-		filename = "%s\%s.html" % (category, item)
+		filename = self.compendium_dir + "%s\%s.html" % (category, item)
 		dirs = os.path.dirname(filename)
 		if not os.path.exists(dirs):
 			os.makedirs(dirs)
@@ -157,13 +136,16 @@ class DDIDownloader:
 		if re.match("http",string):
 			return True
 		return False
-		
+
 	def save_file(self,url):
 		if self.full_url(url):
 			path = self.strip_urls(url)
 		else:
 			path = url
 			url = "http://www.wizards.com/dndinsider/compendium/%s" % path
+			
+		path = self.compendium_dir + path
+		
 		if not os.path.exists(path):
 			dirname = os.path.dirname(path)
 			if not os.path.exists(dirname):
@@ -173,9 +155,9 @@ class DDIDownloader:
 			f = open(path,"wb")
 			f.write(resp.read())
 			f.close()
-			
+
 	def save_xml(self,page,category):
-		path = "%s.xml" % category
+		path = self.compendium_dir + "%s.xml" % category
 		if not os.path.exists(path):
 			print "Saving file : %s " % path
 			f = open(path,"w")
@@ -199,7 +181,7 @@ class DDIDownloader:
 		for link in soup.findAll(name='link'):
 			self.save_file(link['href'])
 			if self.full_url(link['href']):
-				link['href'] = self.strip_urls(link['href'])         
+				link['href'] = self.strip_urls(link['href'])
 			link['href'] = "../" + link['href']
 		for image in soup.findAll(name='img'):
 			self.save_file(image['src'])
@@ -209,7 +191,7 @@ class DDIDownloader:
 		page = soup.prettify()
 		page = self.meta + page
 		return page
-		
+
 	def crawl_category(self,category):
 		ind = self.index(category)
 		for item in ind:
@@ -241,16 +223,16 @@ class DDIDownloader:
 		# Hack for now, eventually parse CSS files to generate list of required stylesheets.
 		for url in urls:
 			self.save_file(url)
-			
+
 	def download_files(self):
 		for category in self.categories:
 			self.crawl_category(category)
-			
+
 	def create_index_html(self):
-		for category in self.categories:	
+		for category in self.categories:
 			classurl = self.indexurl + category
 			response = self.open(classurl)
-
+			print "Obtained %s index" % category
 			soup = BeautifulSoup(response)
 			variables = []
 			for node in soup.findAll(category.lower()):
@@ -266,20 +248,18 @@ class DDIDownloader:
 				link = "\n\t<br /><a href='%s'>%s</a>" % (url,name)
 				index += link
 			index += "\n</html></body>"
-			
-			path = "%s.html" % category
-			
+
+			path = self.compendium_dir + ("%s.html" % category)
+			if not os.path.exists(path):
+				dirname = os.path.dirname(path)
+				if not os.path.exists(dirname):
+					os.makedirs(dirname)
 			print "Saving index file : %s " % path
 			f = codecs.open(path,"w",'utf-8')
 			f.write(index)
 			f.close()
-			
-					
-		
+
 D = DDIDownloader(settings.email,settings.password)
 D.create_index_html()
 D.download_styles()
 D.download_files()
-	
-
-
