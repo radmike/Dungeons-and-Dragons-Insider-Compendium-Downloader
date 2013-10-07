@@ -124,7 +124,7 @@ class DDIDownloader:
 		return url
 
 	def save_page(self,page,category,item):
-		filename = self.compendium_dir + "%s\%s.html" % (category, item)
+		filename = os.path.join(self.compendium_dir, category, "%s.html" % (item))
 		dirs = os.path.dirname(filename)
 		if not os.path.exists(dirs):
 			os.makedirs(dirs)
