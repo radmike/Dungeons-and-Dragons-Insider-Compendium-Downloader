@@ -6,7 +6,7 @@ import re
 import os
 import settings # This file should contain your DDI email and password
                 # Or comment this import out and define settings.email and settings.password in this file
-from BeautifulSoup import BeautifulSoup
+from bs4 import BeautifulSoup
 
 class LoginError(Exception):
     def __init__(self, value):
@@ -23,7 +23,7 @@ class DDIDownloader:
 	indexurl   = "http://www.wizards.com/dndinsider/compendium/CompendiumSearch.asmx/ViewAll?tab="
 	stripurls = ["http://www.wizards.com/dndinsider/compendium/",
 				 "http://www.wizards.com/dnd/"]
-				 
+
 	compendium_dir = "compendium/"
 
 	loginattempts = 0
@@ -108,9 +108,9 @@ class DDIDownloader:
 	def index(self,category):
 		classurl = self.indexurl + category
 		response = self.open(classurl)
-		
+
 		soup = BeautifulSoup(response)
-		
+
 		index = {}
 		D.soup = soup
 		for node in soup.findAll(category.lower()):
@@ -124,13 +124,20 @@ class DDIDownloader:
 		return url
 
 	def save_page(self,page,category,item):
-		filename = self.compendium_dir + "%s\%s.html" % (category, item)
-		dirs = os.path.dirname(filename)
-		if not os.path.exists(dirs):
-			os.makedirs(dirs)
-		f = codecs.open(filename,"w",'utf-8')
-		f.write(page.decode('utf-8'))
-		f.close()
+		filename = self.compendium_dir + "%s/%s.html" % (category, item)
+		if not os.path.exists(filename):
+			dirs = os.path.dirname(filename)
+			if not os.path.exists(dirs):
+				os.makedirs(dirs)
+			f = codecs.open(filename,"w",'utf-8')
+			try:
+				f.write(page)
+			except:
+				try:
+					print "page.decode:" + page.decode('utf-8')
+				except:
+					print "page" + page
+			f.close()
 
 	def full_url(self,string):
 		if re.match("http",string):
@@ -143,9 +150,9 @@ class DDIDownloader:
 		else:
 			path = url
 			url = "http://www.wizards.com/dndinsider/compendium/%s" % path
-			
+
 		path = self.compendium_dir + path
-		
+
 		if not os.path.exists(path):
 			dirname = os.path.dirname(path)
 			if not os.path.exists(dirname):
@@ -195,24 +202,30 @@ class DDIDownloader:
 	def crawl_category(self,category):
 		ind = self.index(category)
 		for item in ind:
-			print "Retrieving %s %s: %s" % (category, item, ind[item].encode('utf-8'))
-			try:
-				page = self.retrieve_page(category,item)
-			except urllib2.HTTPError:
-				if category == "Companion":
-					try:
-						#Some "Companions" are "Associates"
-						page = self.retrieve_page("Associate",item)
-					except urllib2.HTTPError:
-						print "Failed on retry: %s %s" % ("Associate",item)
-						failed.append((category,item))
+			filename = self.compendium_dir + "%s/%s.html" % (category, item)
+
+			if not os.path.exists(filename):
+				print "Retrieving %s %s: %s" % (category, item, ind[item].encode('utf-8'))
+				try:
+					page = self.retrieve_page(category,item)
+				except urllib2.HTTPError:
+					if category == "Companion":
+						try:
+							#Some "Companions" are "Associates"
+							page = self.retrieve_page("Associate",item)
+						except urllib2.HTTPError:
+							print "Failed on retry: %s %s" % ("Associate",item)
+							failed.append((category,item))
+							continue
+					else:
+						print "Failed: %s %s" % (category,item)
+						self.failed.append((category,item))
 						continue
-				else:
-					print "Failed: %s %s" % (category,item)
-					self.failed.append((category,item))
-					continue
-			page = self.cleanup_page(page)
-			self.save_page(page,category,item)
+				page = self.cleanup_page(page)
+				self.save_page(page,category,item)
+			else:
+				print "File exists: %s" % (filename)
+
 
 	def download_styles(self):
 		urls = ['http://www.wizards.com/dndinsider/compendium/styles/site.css',
@@ -240,7 +253,7 @@ class DDIDownloader:
 				for type in self.fields[self.categories.index(category)]:
 					nodevars.append(node.find(type).text)
 				variables.append(nodevars)
-				
+
 			index = self.meta + "<html><body>"
 			for item in variables:
 				url = "%s/%s.html" % (category , item[0])
